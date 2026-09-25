@@ -1,0 +1,12 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+if(NOT TARGET site_fabric::site_fabric)
+  include("${CMAKE_CURRENT_LIST_DIR}/site_fabricTargets.cmake")
+endif()
+
+set(SITE_FABRIC_VERSION "@PROJECT_VERSION@")
+set(SITE_FABRIC_LICENSE "Apache-2.0")
+
+check_required_components(site_fabric)

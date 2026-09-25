@@ -1,0 +1,19 @@
+Site Fabric
+
+Copyright 2026 Summon Software Labs
+
+Site Fabric is an open-source, vendor-neutral runtime for composing the
+aggregate network state of one physical site from authoritative member-domain
+publications, and for holding the site-level authority that fences who may
+change it.
+
+This product is licensed under the Apache License, Version 2.0. See the
+LICENSE file in this distribution for the full license text.
+
+Site Fabric does not collect or transmit any telemetry. All state, logs and
+evidence are written to local files chosen by the operator and never leave the
+machine running the software.
+
+Site Fabric accepts contributions from individuals and organizations on the
+terms of the Apache License 2.0 without requiring a Contributor License
+Agreement (CLA). See CONTRIBUTING.md for contribution guidance.
