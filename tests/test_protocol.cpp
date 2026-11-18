@@ -10,6 +10,7 @@
 #include "site_fabric/site_fabric.hpp"
 #include "site_fabric/synthetic.hpp"
 #include "test_support.hpp"
+#include "transport/tcp.hpp"
 
 using namespace site_fabric;
 
@@ -310,4 +311,15 @@ SF_TEST(protocol, truncated_messages_are_refused_at_every_length) {
         decode_message(std::span<const std::uint8_t>(payload.data(), length), decoded);
     SF_CHECK(!is_ok(status));
   }
+}
+
+SF_TEST(protocol, a_second_listener_cannot_take_a_listening_port) {
+  internal::TcpListener first;
+  SF_REQUIRE(is_ok(internal::TcpListener::listen_on("127.0.0.1", 0, 4, first)));
+  SF_REQUIRE(first.port() != 0);
+  internal::TcpListener second;
+  // Two controllers must never share one listening port: the second bind fails.
+  SF_CHECK(!is_ok(internal::TcpListener::listen_on("127.0.0.1", first.port(), 4, second)));
+  second.close();
+  first.close();
 }

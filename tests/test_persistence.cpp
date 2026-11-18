@@ -1,10 +1,12 @@
 // Copyright 2026 Summon Software Labs.
 // Licensed under the Apache License, Version 2.0.
 
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "site_fabric/persistence.hpp"
@@ -347,4 +349,91 @@ SF_TEST(persistence, content_digest_is_order_sensitive) {
   StoreContents again;
   SF_REQUIRE(is_ok(SiteStore::read_file(config.path, again)));
   SF_CHECK(digest == again.content_digest());
+}
+
+SF_TEST(persistence, a_compaction_waits_for_a_reader_of_the_store) {
+  sftest::TemporaryDirectory directory("store-compact-reader");
+  StoreConfig config;
+  config.path = directory.file("site.sfstore");
+  config.snapshot_history = 2;
+  config.max_records = 1000;
+
+  SiteStore store;
+  SF_REQUIRE(is_ok(store.open(config)));
+  for (std::uint64_t index = 1; index <= 6; ++index) {
+    SiteSnapshot snapshot;
+    SF_REQUIRE(make_snapshot(1000000 + static_cast<std::int64_t>(index), snapshot, index));
+    SF_REQUIRE(is_ok(store.append_snapshot(snapshot)));
+  }
+  bool reader_opened = false;
+  bool compacted = false;
+  std::uint64_t dropped = 0;
+  {
+    // Another tool reading the store (an inspection, a backup, a scan) holds it
+    // open while the compaction replaces it, and closes it shortly after.
+    std::ifstream reader(config.path, std::ios::binary);
+    reader_opened = reader.is_open();
+    std::thread compactor([&store, &dropped, &compacted] { compacted = is_ok(store.compact(dropped)); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    reader.close();
+    compactor.join();
+  }
+  SF_CHECK(reader_opened);
+  // The replacement waits for the reader instead of failing the compaction.
+  SF_CHECK(compacted);
+  SF_CHECK_EQ(std::uint64_t(4), dropped);
+  SF_CHECK(store.is_open());
+  SF_REQUIRE(is_ok(store.close()));
+
+  StoreContents contents;
+  SF_REQUIRE(is_ok(SiteStore::read_file(config.path, contents)));
+  SF_CHECK_EQ(std::size_t(2), contents.snapshot_history.size());
+  SF_CHECK_EQ(std::uint64_t(6), contents.latest_snapshot.sequence);
+}
+
+SF_TEST(persistence, a_compaction_that_cannot_replace_the_store_keeps_it_open) {
+  sftest::TemporaryDirectory directory("store-compact-held");
+  StoreConfig config;
+  config.path = directory.file("site.sfstore");
+  config.snapshot_history = 2;
+  config.max_records = 1000;
+
+  SiteStore store;
+  SF_REQUIRE(is_ok(store.open(config)));
+  for (std::uint64_t index = 1; index <= 6; ++index) {
+    SiteSnapshot snapshot;
+    SF_REQUIRE(make_snapshot(1000000 + static_cast<std::int64_t>(index), snapshot, index));
+    SF_REQUIRE(is_ok(store.append_snapshot(snapshot)));
+  }
+  SiteSnapshot seventh;
+  SF_REQUIRE(make_snapshot(1000007, seventh, 7));
+  bool reader_opened = false;
+  bool refused = false;
+  bool open_after_failure = false;
+  bool appended = false;
+  std::uint64_t dropped = 0;
+  {
+    // A reader that keeps the store open for longer than the replacement waits
+    // makes the compaction fail; the original store is still in place.
+    std::ifstream reader(config.path, std::ios::binary);
+    reader_opened = reader.is_open();
+    refused = !is_ok(store.compact(dropped));
+    open_after_failure = store.is_open();
+    appended = is_ok(store.append_snapshot(seventh));
+  }
+  SF_CHECK(reader_opened);
+  SF_CHECK(refused);
+  // The store stays open and keeps recording; it used to stay closed, so every
+  // later append was refused until the store was reopened.
+  SF_CHECK(open_after_failure);
+  SF_CHECK(appended);
+  // Once the reader has gone, a later compaction succeeds.
+  SF_CHECK(is_ok(store.compact(dropped)));
+  SF_CHECK_EQ(std::uint64_t(5), dropped);
+  SF_REQUIRE(is_ok(store.close()));
+
+  StoreContents contents;
+  SF_REQUIRE(is_ok(SiteStore::read_file(config.path, contents)));
+  SF_CHECK_EQ(std::size_t(2), contents.snapshot_history.size());
+  SF_CHECK_EQ(std::uint64_t(7), contents.latest_snapshot.sequence);
 }

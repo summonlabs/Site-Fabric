@@ -592,6 +592,11 @@ Status SiteStore::open(const StoreConfig& config) {
     std::uint64_t dropped = 0;
     const Status compacted = impl_->compact_locked(dropped);
     if (!is_ok(compacted)) {
+      // A failed open leaves the store closed, as before.
+      if (impl_->handle != nullptr) {
+        std::fclose(impl_->handle);
+        impl_->handle = nullptr;
+      }
       return compacted;
     }
   }
@@ -733,6 +738,7 @@ Status SiteStore::Impl::compact_locked(std::uint64_t& dropped) {
     return Status::LIMIT_EXCEEDED;
   }
 
+  const bool was_open = handle != nullptr;
   if (handle != nullptr) {
     std::fflush(handle);
     std::fclose(handle);
@@ -740,6 +746,16 @@ Status SiteStore::Impl::compact_locked(std::uint64_t& dropped) {
   }
   const Status written = internal::write_file_atomic(config.path, image);
   if (!is_ok(written)) {
+    // The original file is still in place. An open store is reopened on it, so
+    // it keeps recording and a later compaction can try again; it used to stay
+    // closed, and every later append was refused.
+    if (was_open) {
+      handle = std::fopen(config.path.string().c_str(), "rb+");
+      if (handle != nullptr && std::fseek(handle, 0, SEEK_END) != 0) {
+        std::fclose(handle);
+        handle = nullptr;
+      }
+    }
     return written;
   }
   handle = std::fopen(config.path.string().c_str(), "rb+");

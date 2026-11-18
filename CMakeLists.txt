@@ -58,8 +58,10 @@ if(MSVC)
   endif()
   set(SITE_FABRIC_ASAN_AVAILABLE OFF)
   if(SITE_FABRIC_ENABLE_ASAN)
-    target_compile_options(site_fabric_warnings INTERFACE /fsanitize=address)
-    target_link_options(site_fabric_warnings INTERFACE /fsanitize=address)
+    # Debug information is required: without it MSVC warns C5072 for every
+    # source, which SITE_FABRIC_WARNINGS_AS_ERRORS turns into an error.
+    target_compile_options(site_fabric_warnings INTERFACE /fsanitize=address /Zi)
+    target_link_options(site_fabric_warnings INTERFACE /INCREMENTAL:NO /DEBUG)
     set(SITE_FABRIC_ASAN_AVAILABLE ON)
   endif()
   target_compile_definitions(site_fabric_warnings INTERFACE

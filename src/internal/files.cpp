@@ -3,9 +3,11 @@
 
 #include "internal/files.hpp"
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <system_error>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -114,8 +116,30 @@ Status write_file_atomic(const std::filesystem::path& path,
     return short_write ? Status::TRUNCATED : Status::INVALID;
   }
 
+  // While a reader has the target open (an inspection, a backup, an antivirus
+  // or indexing scan) the rename fails on Windows until the reader closes it,
+  // so it is retried for a bounded time (about 2 s). A directory in the way is
+  // not transient and fails at once.
   std::error_code code;
-  std::filesystem::rename(temporary, path, code);
+  for (int attempt = 0;; ++attempt) {
+    std::filesystem::rename(temporary, path, code);
+    if (!code) {
+      break;
+    }
+#ifdef _WIN32
+    // ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION.
+    std::error_code kind;
+    const bool transient = code.category() == std::system_category() &&
+                           (code.value() == 5 || code.value() == 32 || code.value() == 33) &&
+                           !std::filesystem::is_directory(path, kind);
+#else
+    const bool transient = false;
+#endif
+    if (!transient || attempt >= 100) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
   if (code) {
     std::error_code ignored;
     std::filesystem::remove(temporary, ignored);
